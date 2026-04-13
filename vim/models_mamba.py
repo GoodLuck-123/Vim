@@ -17,6 +17,15 @@ import math
 
 from collections import namedtuple
 
+# Try to import from local mamba-1p1p1 first (with custom parameters), fall back to pip package
+import sys, os as _os
+try:
+    _vim_root = _os.path.dirname(_os.path.dirname((_os.path.abspath(__file__))))
+    if _os.path.exists(_os.path.join(_vim_root, 'mamba-1p1p1')):
+        sys.path.insert(0, _os.path.join(_vim_root, 'mamba-1p1p1'))
+except:
+    pass
+
 from mamba_ssm.modules.mamba_simple import Mamba
 from mamba_ssm.utils.generation import GenerationMixin
 from mamba_ssm.utils.hf import load_config_hf, load_state_dict_hf
@@ -25,9 +34,12 @@ from rope import *
 import random
 
 try:
-    from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
+    from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
 except ImportError:
-    RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
+    try:
+        from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
+    except ImportError:
+        RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
 
 __all__ = [
@@ -164,7 +176,7 @@ def create_block(
     # import ipdb; ipdb.set_trace()
     mixer_cls = partial(Mamba, d_state=d_state, layer_idx=layer_idx, bimamba_type=bimamba_type, if_divide_out=if_divide_out, init_layer_scale=init_layer_scale, **ssm_cfg, **factory_kwargs)
     norm_cls = partial(
-        nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
+        nn.LayerNorm if (not rms_norm or RMSNorm is None) else RMSNorm, eps=norm_epsilon, **factory_kwargs
     )
     block = Block(
         d_model,
