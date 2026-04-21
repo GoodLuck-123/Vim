@@ -21,6 +21,7 @@ class SILogLoss(nn.Module):
         super().__init__()
         self.variance_focus = variance_focus
         self.loss_weight = loss_weight
+        self.loss_name = 'loss_depth'
 
     def forward(self, pred, target, weight=None, avg_factor=None, **kwargs):
         """Compute SILog loss.
@@ -82,6 +83,7 @@ class BerHuLoss(nn.Module):
         super().__init__()
         self.threshold = threshold
         self.loss_weight = loss_weight
+        self.loss_name = 'loss_depth'
 
     def forward(self, pred, target, weight=None, avg_factor=None, **kwargs):
         """Compute BerHu loss.

@@ -3,6 +3,32 @@ from mmseg.datasets.builder import PIPELINES
 
 
 @PIPELINES.register_module()
+class DepthFormatBundle:
+    """Simplistic formatter for depth estimation. Converts tensors to torch.Tensor."""
+
+    def __call__(self, results):
+        """Format results for depth estimation."""
+        import torch
+        import numpy as np
+
+        if 'img' in results:
+            if isinstance(results['img'], np.ndarray):
+                results['img'] = torch.from_numpy(results['img'].transpose(2, 0, 1).copy()).contiguous()
+
+        if 'gt_semantic_seg' in results:
+            if isinstance(results['gt_semantic_seg'], np.ndarray):
+                results['gt_semantic_seg'] = torch.from_numpy(results['gt_semantic_seg'][np.newaxis, ...].copy()).contiguous()
+
+        # Clean up intermediate keys for collate
+        keys_to_keep = ['img', 'gt_semantic_seg']
+        keys_to_remove = [k for k in results.keys() if k not in keys_to_keep]
+        for k in keys_to_remove:
+            del results[k]
+
+        return results
+
+
+@PIPELINES.register_module()
 class LoadDepthAnnotation:
     """Load depth annotations from file.
 
@@ -24,6 +50,7 @@ class LoadDepthAnnotation:
             dict: Updated results with gt_semantic_seg containing depth map
         """
         import imageio
+        import numpy as np
 
         # Get the depth file path from the annotation info
         # The img_infos from NYUDepthV2Dataset contains the full relative path
@@ -45,7 +72,6 @@ class LoadDepthAnnotation:
             # Load 16-bit PNG (mm to m)
             depth = imageio.imread(depth_path).astype('float32') / 1000.0
         elif depth_path.endswith('.npy'):
-            import numpy as np
             depth = np.load(depth_path).astype('float32')
         else:
             raise ValueError(f'Unsupported depth format: {depth_path}')
@@ -58,6 +84,12 @@ class LoadDepthAnnotation:
             results['seg_fields'] = []
         if 'gt_semantic_seg' not in results['seg_fields']:
             results['seg_fields'].append('gt_semantic_seg')
+
+        # Initialize meta fields that may be accessed by downstream transforms
+        if 'img_meta' not in results:
+            results['img_meta'] = {}
+        if 'flip' not in results:
+            results['flip'] = False
 
         return results
 

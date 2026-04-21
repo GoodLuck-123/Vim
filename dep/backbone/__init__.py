@@ -1,5 +1,8 @@
-from .vim import VisionMambaSeg
+from .cnn_baseline import CNNBaseline
 
-
-# __all__ = ['EVA2', 'VisionMambaSeg', 'DeiTSeg', 'FlashDeiTSeg']
-__all__ = ['VisionMambaSeg',]
+try:
+    from .vim import VisionMambaSeg
+    __all__ = ['VisionMambaSeg', 'CNNBaseline']
+except ImportError:
+    # Mamba compilation not available, CNN baseline still works
+    __all__ = ['CNNBaseline']

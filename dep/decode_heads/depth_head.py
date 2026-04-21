@@ -26,36 +26,48 @@ class DepthHead(UPerHead):
         self.min_depth = min_depth
         self.max_depth = max_depth
 
+        # Add adapter to project input features to the expected channel size
+        in_ch = kwargs.get('in_channels', [512])[0]  # First input channel
+        self.adapter = nn.Sequential(
+            nn.Conv2d(in_ch, self.channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(self.channels),
+            nn.ReLU(inplace=True)
+        )
+
     def forward(self, inputs):
-        """Forward pass returning raw logits (B, 1, H, W)."""
+        """Forward pass returning raw depth (B, H, W)."""
         x = self._transform_inputs(inputs)
-        out = self.forward_head(x)
+
+        # Project features to cls_seg's expected channel size
+        feat = self.adapter(x[0])  # (B, channels, H/4, W/4)
+        out = self.cls_seg(feat)   # (B, 1, H/4, W/4)
+
+        # Upsample to original image size (factor of 4)
+        from torch.nn import functional as F
+        out = F.interpolate(out, scale_factor=4, mode='bilinear', align_corners=False)
+
+        # Squeeze to (B, H, W) for loss compatibility
+        out = out.squeeze(1)
+
         return out
-
-    def forward_head(self, x):
-        """Decode using PPM and convolution layers."""
-        # Process multi-scale features through PPM (if used in parent)
-        if hasattr(self, 'ppm'):
-            ppm_out = self.ppm(x[0])
-            x = [ppm_out] + x[1:]
-
-        # Fuse features from different scales
-        if hasattr(self, '_forward_ppm'):
-            # For UPerHead compatibility
-            output = self.decode_head(x)
-        else:
-            # Simple decode: use the first feature
-            output = self.cls_seg(x[0])
-
-        return output
 
     def forward_train(self, inputs, img_metas, gt_semantic_seg, train_cfg):
         """Forward pass for training.
 
         Note: gt_semantic_seg parameter actually contains gt_depth (by design).
         """
-        seg_logits = self.forward(inputs)
-        losses = self.losses(seg_logits, gt_semantic_seg)
+        seg_logits = self.forward(inputs)  # (B, H, W)
+
+        # Unsqueeze back to (B, 1, H, W) for loss function
+        seg_logits = seg_logits.unsqueeze(1)
+
+        # Squeeze depth map if needed: (B, 1, H, W) -> (B, H, W)
+        if gt_semantic_seg.dim() == 4 and gt_semantic_seg.shape[1] == 1:
+            gt_semantic_seg = gt_semantic_seg.squeeze(1)
+
+        # Call loss directly (bypass parent's resize logic)
+        loss_decode = self.loss_decode(seg_logits, gt_semantic_seg)
+        losses = dict(loss_depth=loss_decode)
         return losses
 
     def forward_test(self, inputs, img_metas, test_cfg):

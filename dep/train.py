@@ -16,13 +16,17 @@ from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger
 
-from backbone import vim
-
-# Register custom depth modules
+# Register custom depth modules (before backbone import)
 from decode_heads import depth_head
 from losses import silog_loss
 from datasets import nyu_depth_v2
 from datasets.pipelines import depth_loading
+
+# Optional: try to import vim backbone (may fail if mamba not compiled)
+try:
+    from backbone import vim
+except ImportError:
+    pass
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a depth estimator')

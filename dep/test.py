@@ -19,13 +19,17 @@ from mmseg.datasets import build_dataloader, build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import build_ddp, build_dp, get_device, setup_multi_processes
 
-from backbone import vim
-
 # Register custom depth modules
 from decode_heads import depth_head
 from losses import silog_loss
 from datasets import nyu_depth_v2
 from datasets.pipelines import depth_loading
+
+# Optional: try to import vim backbone
+try:
+    from backbone import vim
+except ImportError:
+    pass
 
 
 def parse_args():

@@ -28,10 +28,10 @@ class NYUDepthV2Dataset(CustomDataset):
         **kwargs: Other arguments passed to CustomDataset
     """
 
-    CLASSES = None
+    CLASSES = ('depth',)
     PALETTE = None
 
-    def load_annotations(self, img_dir, img_suffix, ann_dir, seg_suffix, split=None):
+    def load_annotations(self, img_dir, img_suffix, ann_dir, seg_map_suffix, split=None):
         """Load annotations from directory structure.
 
         For NYU Depth v2, annotations (.png) are in the same directory as images (.jpg).
