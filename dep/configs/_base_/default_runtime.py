@@ -12,3 +12,6 @@ load_from = None
 resume_from = None
 workflow = [('train', 1)]
 cudnn_benchmark = True
+
+# Runner config
+runner = dict(type='IterBasedRunner', max_iters=60000)

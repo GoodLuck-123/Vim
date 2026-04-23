@@ -58,10 +58,19 @@ class SILogLoss(nn.Module):
         # Compute log differences
         log_diff = torch.log(pred_valid) - torch.log(target_valid)
 
-        # SILog loss: sqrt(mean(d^2) - λ * mean(d)^2) * 10
-        loss = torch.sqrt(
-            (log_diff ** 2).mean() - self.variance_focus * (log_diff.mean() ** 2)
-        ) * 10.0
+        # SILog loss: sqrt(mean(d^2) - λ * mean(d)^2)
+        # Note: Original paper multiplies by 10, but this can cause numerical instability
+        # in deep networks. We use scale_factor=1.0 for numerical stability.
+        mean_squared = (log_diff ** 2).mean()
+        squared_mean = (log_diff.mean() ** 2)
+        variance_term = mean_squared - self.variance_focus * squared_mean
+
+        # Clamp to prevent sqrt of negative numbers due to floating point errors
+        variance_term = torch.clamp(variance_term, min=1e-8)
+
+        loss = torch.sqrt(variance_term)
+        # Apply scale factor (original: 10.0, stable version: 1.0)
+        loss = loss * 1.0
 
         return self.loss_weight * loss
 

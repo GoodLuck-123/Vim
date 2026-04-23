@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from mmseg.models.builder import HEADS
 from mmseg.models.decode_heads import UPerHead
 
@@ -17,39 +16,17 @@ class DepthHead(UPerHead):
     """
 
     def __init__(self, min_depth=1e-3, max_depth=10.0, **kwargs):
-        """Initialize DepthHead.
-
-        Forces num_classes=1 for single-channel output.
-        """
         kwargs['num_classes'] = 1
         super().__init__(**kwargs)
         self.min_depth = min_depth
         self.max_depth = max_depth
 
-        # Add adapter to project input features to the expected channel size
-        in_ch = kwargs.get('in_channels', [512])[0]  # First input channel
-        self.adapter = nn.Sequential(
-            nn.Conv2d(in_ch, self.channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(self.channels),
-            nn.ReLU(inplace=True)
-        )
-
     def forward(self, inputs):
-        """Forward pass returning raw depth (B, H, W)."""
-        x = self._transform_inputs(inputs)
-
-        # Project features to cls_seg's expected channel size
-        feat = self.adapter(x[0])  # (B, channels, H/4, W/4)
-        out = self.cls_seg(feat)   # (B, 1, H/4, W/4)
-
-        # Upsample to original image size (factor of 4)
+        """Forward using full UPerHead multi-scale fusion, returns (B, H, W)."""
         from torch.nn import functional as F
+        out = super().forward(inputs)  # (B, 1, H/4, W/4) - full FPN+PSP fusion
         out = F.interpolate(out, scale_factor=4, mode='bilinear', align_corners=False)
-
-        # Squeeze to (B, H, W) for loss compatibility
-        out = out.squeeze(1)
-
-        return out
+        return out.squeeze(1)          # (B, H, W)
 
     def forward_train(self, inputs, img_metas, gt_semantic_seg, train_cfg):
         """Forward pass for training.

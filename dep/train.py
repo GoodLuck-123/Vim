@@ -25,7 +25,8 @@ from datasets.pipelines import depth_loading
 # Optional: try to import vim backbone (may fail if mamba not compiled)
 try:
     from backbone import vim
-except ImportError:
+except Exception:
+    # Mamba not available - CNN baseline will still work
     pass
 
 def parse_args():
