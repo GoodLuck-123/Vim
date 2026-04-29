@@ -194,7 +194,7 @@ if __name__ == '__main__':
                         help='Checkpoint path')
     parser.add_argument('--mode', choices=['pairs', 'video'], default='video',
                         help='pairs: GT-vs-Pred from jpg/png dir; video: infer from video file')
-    parser.add_argument('--input', default='test01_depth.mp4',
+    parser.add_argument('--input', default='../data/test01.mp4',
                         help='Input: data directory (pairs mode) or video file (video mode)')
     parser.add_argument('--output', default='depth_output.mp4',
                         help='Output video path')

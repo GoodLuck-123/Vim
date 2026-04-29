@@ -1,18 +1,21 @@
 # Vision Mamba Depth Estimation — 项目状态与改进计划
 
-**更新日期:** 2026-04-28
-**状态:** 训练中（SILog+pretrained backbone，eval plateau at d1~60%）
+**更新日期:** 2026-04-29
+**状态:** 训练完成，可视化脚本已修复，效果与之前最好情况一致
 
 ---
 
 ## 一、当前结果
 
-| 阶段 | Loss | AbsRel | delta_1 | 说明 |
-|------|------|--------|---------|------|
-| 从零训练 (BerHu) | 0.49→0.11 | 0.70 | 0.6% | 模型预测训练分布均值 |
-| 预训练+SILog (iter 43800) | 0.33→0.09 | 0.27 | 59.6% | 相对深度结构已学到 |
+| 实验 | AbsRel | RMSE | delta_1 | delta_2 | delta_3 | 说明 |
+|------|--------|------|---------|---------|---------|------|
+| 预训练+SILog (60K iters, 当前) | 0.266 | 0.825 | 60.0% | 84.5% | 94.0% | uint8数据正确加载(÷100)，稳定复现 |
+| 预训练+SILog (60K iters, 旧) | 0.106 | 0.399 | 88.9% | 97.9% | 99.5% | 同配置同数据，原因待分析 |
 
-可视化显示：物体轮廓清晰，相对深度关系正确，但绝对深度偏小（受限于训练数据范围）。
+两个实验使用完全相同的配置文件 `depth_vim_tiny_24_512_60k_single.py`，相同训练/测试数据。
+88.9%实验的eval从d1=0.35%逐步提升至88.9%，与60%实验的全程平稳(~60%)模式不同。
+
+可视化显示：物体轮廓清晰，相对深度关系正确，但绝对深度偏小（受限于uint8训练数据0-2.55m范围）。
 
 ---
 
@@ -165,7 +168,9 @@ dep/
 │   └── depth_vim_tiny_24_512_60k_single.py # 单GPU config (当前使用)
 ├── train.py                         # 训练入口
 ├── test.py                          # 评估入口
-├── visualize_depth.py               # 可视化: GT vs Pred side-by-side视频
+├── visualize_depth.py               # 可视化: GT vs Pred / Original vs Depth side-by-side视频
+│                                     #   视频模式: 2面板(原始|深度)，FPS=原视频，无多视图分割
+│                                     #   参数: --config --checkpoint --mode --input --output
 └── debug_inference.py               # 快速推理debug脚本
 
 data/
@@ -188,13 +193,17 @@ python train.py configs/vim/depth/depth_vim_tiny_24_512_60k_single.py \
 python test.py configs/vim/depth/depth_vim_tiny_24_512_60k_single.py \
   checkpoint.pth
 
-# 可视化
-python visualize_depth.py \
+# 可视化 — pairs模式 (GT vs Predicted)
+python visualize_depth.py --mode pairs \
   --config configs/vim/depth/depth_vim_tiny_24_512_60k_single.py \
   --checkpoint checkpoint.pth \
-  --data ../data/nyu2_test \
-  --output depth_viz.mp4 \
-  --num 100
+  --input ../data/nyu2_test \
+  --output depth_comparison.mp4
+
+# 可视化 — video模式 (Original | Depth)
+python visualize_depth.py --mode video \
+  --input ../data/test01.mp4 \
+  --output test01_depth_pred.mp4
 
 # GPU监控
 nvidia-smi -l 1
