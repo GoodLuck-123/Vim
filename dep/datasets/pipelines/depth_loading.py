@@ -60,17 +60,21 @@ class LoadDepthAnnotation:
         if seg_map is None:
             raise ValueError(f'No seg_map in ann_info. Available keys: {list(ann_info.keys())}')
 
-        # Construct full depth file path
-        data_root = results.get('data_root', '')
-        if data_root:
-            depth_path = osp.join(data_root, seg_map)
+        # Construct full depth file path using seg_prefix (set by CustomDataset)
+        seg_prefix = results.get('seg_prefix', '')
+        if seg_prefix:
+            depth_path = osp.join(seg_prefix, seg_map)
         else:
             depth_path = seg_map
 
         # Load depth map
         if depth_path.endswith('.png'):
-            # Load 16-bit PNG (mm to m)
-            depth = imageio.imread(depth_path).astype('float32') / 1000.0
+            depth_raw = imageio.imread(depth_path)
+            # Detect dtype: uint8 = cm (/100), uint16 = mm (/1000)
+            if depth_raw.dtype == np.uint8:
+                depth = depth_raw.astype('float32') / 100.0
+            else:
+                depth = depth_raw.astype('float32') / 1000.0
         elif depth_path.endswith('.npy'):
             depth = np.load(depth_path).astype('float32')
         else:

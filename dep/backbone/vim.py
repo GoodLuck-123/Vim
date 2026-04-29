@@ -133,7 +133,7 @@ class VisionMambaSeg(VisionMamba):
 
             # load_checkpoint(self, pretrained, strict=False, logger=logger)
 
-            state_dict = torch.load(pretrained, map_location="cpu")
+            state_dict = torch.load(pretrained, map_location="cpu", weights_only=False)
             # import ipdb; ipdb.set_trace()
             state_dict_model = state_dict["model"]
             state_dict_model.pop("head.weight")
@@ -144,6 +144,13 @@ class VisionMambaSeg(VisionMamba):
                 state_dict_model.pop("rope.freqs_sin")
             except:
                 print("no rope in the pretrained model")
+
+            # Remove cls_token from pretrained — depth model doesn't use cls_token
+            if 'cls_token' in state_dict_model:
+                del state_dict_model['cls_token']
+            # Remove cls_token position from pos_embed (first token)
+            if state_dict_model['pos_embed'].shape[1] != self.pos_embed.shape[1]:
+                state_dict_model['pos_embed'] = state_dict_model['pos_embed'][:, 1:, :]
 
             if self.patch_embed.patch_size[-1] != state_dict["model"]["patch_embed.proj.weight"].shape[-1]:
                 state_dict_model.pop("patch_embed.proj.weight")

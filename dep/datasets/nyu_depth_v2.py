@@ -32,41 +32,46 @@ class NYUDepthV2Dataset(CustomDataset):
     PALETTE = None
 
     def load_annotations(self, img_dir, img_suffix, ann_dir, seg_map_suffix, split=None):
-        """Load annotations from directory structure.
-
-        For NYU Depth v2, annotations (.png) are in the same directory as images (.jpg).
-        """
+        """Load annotations. Supports scene-subdir layout and flat layout."""
         img_infos = []
-
-        # img_dir should be like 'nyu2_train' or 'nyu2_test'
         img_dir_path = osp.join(self.data_root, img_dir)
 
         if not osp.exists(img_dir_path):
             raise FileNotFoundError(f'Directory not found: {img_dir_path}')
 
-        # Iterate through scene directories
-        for scene_name in sorted(os.listdir(img_dir_path)):
-            scene_path = osp.join(img_dir_path, scene_name)
+        entries = os.listdir(img_dir_path)
+        has_subdirs = any(osp.isdir(osp.join(img_dir_path, e)) for e in entries)
 
-            if not osp.isdir(scene_path):
-                continue
-
-            # Find all image files in this scene
-            for img_file in sorted(os.listdir(scene_path)):
-                if not img_file.endswith('.jpg'):
+        if has_subdirs:
+            # Layout 1: scene subdirectories with .jpg/.png pairs
+            for scene_name in sorted(os.listdir(img_dir_path)):
+                scene_path = osp.join(img_dir_path, scene_name)
+                if not osp.isdir(scene_path):
                     continue
-
-                # Corresponding depth file
-                depth_file = img_file.replace('.jpg', '.png')
-                depth_path = osp.join(scene_path, depth_file)
-
+                for img_file in sorted(os.listdir(scene_path)):
+                    if not img_file.endswith('.jpg'):
+                        continue
+                    depth_file = img_file.replace('.jpg', '.png')
+                    depth_path = osp.join(scene_path, depth_file)
+                    if not osp.exists(depth_path):
+                        continue
+                    img_info = dict(
+                        filename=osp.join(scene_name, img_file),
+                        ann=dict(seg_map=osp.join(scene_name, depth_file))
+                    )
+                    img_infos.append(img_info)
+        else:
+            # Layout 2: flat files — match *_colors.png with *_depth.png
+            for rgb_file in sorted(entries):
+                if not rgb_file.endswith('_colors.png'):
+                    continue
+                depth_file = rgb_file.replace('_colors.png', '_depth.png')
+                depth_path = osp.join(img_dir_path, depth_file)
                 if not osp.exists(depth_path):
-                    # print(f'Warning: depth file not found for {img_file}')
                     continue
-
                 img_info = dict(
-                    filename=osp.join(img_dir, scene_name, img_file),
-                    ann=dict(seg_map=osp.join(img_dir, scene_name, depth_file))
+                    filename=rgb_file,
+                    ann=dict(seg_map=depth_file)
                 )
                 img_infos.append(img_info)
 
@@ -90,7 +95,7 @@ class NYUDepthV2Dataset(CustomDataset):
         gt_depths = []
         for idx in range(len(self)):
             gt_depth_file = osp.join(
-                self.data_root, self.img_infos[idx]['ann']['seg_map']
+                self.data_root, self.ann_dir, self.img_infos[idx]['ann']['seg_map']
             )
             gt_depth = self._load_depth(gt_depth_file)
             gt_depths.append(gt_depth)
@@ -124,28 +129,36 @@ class NYUDepthV2Dataset(CustomDataset):
             pred_valid = pred_depth[valid_mask]
             gt_valid = gt_depth[valid_mask]
 
-            # Clip predictions to valid range
+            # Clip to valid range
             pred_valid = np.clip(pred_valid, 1e-3, 10.0)
             gt_valid = np.clip(gt_valid, 1e-3, 10.0)
 
+            # Per-image LS alignment in log space: solve min_{s,t} ||s*log(pred)+t - log(gt)||
+            log_pred = np.log(pred_valid)
+            log_gt = np.log(gt_valid)
+            A = np.stack([log_pred, np.ones_like(log_pred)], axis=1)  # (N, 2)
+            st, _, _, _ = np.linalg.lstsq(A, log_gt, rcond=None)
+            pred_aligned = np.exp(st[0] * log_pred + st[1])
+            pred_aligned = np.clip(pred_aligned, 1e-3, 10.0)
+
             # Absolute Relative Error
-            abs_rel = np.mean(np.abs(pred_valid - gt_valid) / gt_valid)
+            abs_rel = np.mean(np.abs(pred_aligned - gt_valid) / gt_valid)
             abs_rel_list.append(abs_rel)
 
             # Squared Relative Error
-            sqr_rel = np.mean(((pred_valid - gt_valid) ** 2) / (gt_valid ** 2))
+            sqr_rel = np.mean(((pred_aligned - gt_valid) ** 2) / (gt_valid ** 2))
             sqr_rel_list.append(sqr_rel)
 
             # RMSE
-            rmse = np.sqrt(np.mean((pred_valid - gt_valid) ** 2))
+            rmse = np.sqrt(np.mean((pred_aligned - gt_valid) ** 2))
             rmse_list.append(rmse)
 
             # RMSE in log space
-            rmse_log = np.sqrt(np.mean((np.log(pred_valid) - np.log(gt_valid)) ** 2))
+            rmse_log = np.sqrt(np.mean((np.log(pred_aligned) - np.log(gt_valid)) ** 2))
             rmse_log_list.append(rmse_log)
 
             # Delta thresholds
-            ratio = np.maximum(pred_valid / gt_valid, gt_valid / pred_valid)
+            ratio = np.maximum(pred_aligned / gt_valid, gt_valid / pred_aligned)
             a1 = np.mean(ratio < 1.25)
             a1_list.append(a1)
 
@@ -178,8 +191,11 @@ class NYUDepthV2Dataset(CustomDataset):
         import imageio
 
         if depth_file.endswith('.png'):
-            # Load 16-bit PNG (common for NYUv2)
-            depth = imageio.imread(depth_file).astype(np.float32) / 1000.0  # mm to m
+            depth_raw = imageio.imread(depth_file)
+            if depth_raw.dtype == np.uint8:
+                depth = depth_raw.astype(np.float32) / 100.0   # cm to m
+            else:
+                depth = depth_raw.astype(np.float32) / 1000.0  # mm to m
         elif depth_file.endswith('.npy'):
             depth = np.load(depth_file).astype(np.float32)
         else:

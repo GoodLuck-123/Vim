@@ -17,6 +17,7 @@ from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger
 
 # Register custom depth modules (before backbone import)
+import segmentors
 from decode_heads import depth_head
 from losses import silog_loss
 from datasets import nyu_depth_v2

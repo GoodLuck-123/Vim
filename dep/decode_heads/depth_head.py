@@ -26,6 +26,8 @@ class DepthHead(UPerHead):
         from torch.nn import functional as F
         out = super().forward(inputs)  # (B, 1, H/4, W/4) - full FPN+PSP fusion
         out = F.interpolate(out, scale_factor=4, mode='bilinear', align_corners=False)
+        # Softplus ensures positive values for log-space SILogLoss
+        out = F.softplus(out) + self.min_depth
         return out.squeeze(1)          # (B, H, W)
 
     def forward_train(self, inputs, img_metas, gt_semantic_seg, train_cfg):
@@ -50,9 +52,10 @@ class DepthHead(UPerHead):
     def forward_test(self, inputs, img_metas, test_cfg):
         """Forward pass for testing.
 
-        Returns depth values clipped to [min_depth, max_depth].
+        Returns depth values clamped to [min_depth, max_depth].
+        No sigmoid — depth is raw regression, not classification.
         """
+        import torch
         seg_logits = self.forward(inputs)
-        # Apply sigmoid and scale to [min_depth, max_depth]
-        depth = seg_logits.sigmoid() * (self.max_depth - self.min_depth) + self.min_depth
+        depth = torch.clamp(seg_logits, self.min_depth, self.max_depth)
         return depth

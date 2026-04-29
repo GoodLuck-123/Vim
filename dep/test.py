@@ -20,6 +20,7 @@ from mmseg.models import build_segmentor
 from mmseg.utils import build_ddp, build_dp, get_device, setup_multi_processes
 
 # Register custom depth modules
+import segmentors
 from decode_heads import depth_head
 from losses import silog_loss
 from datasets import nyu_depth_v2
