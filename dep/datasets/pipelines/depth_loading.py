@@ -97,3 +97,90 @@ class LoadDepthAnnotation:
 
         return results
 
+
+@PIPELINES.register_module()
+class RandomGaussianBlur:
+    """Apply Gaussian blur to RGB image, leaving depth unchanged.
+
+    Forces the model to rely on geometric structure rather than fine texture,
+    which is desirable for depth estimation.
+
+    Args:
+        kernel_sizes (list): Candidate kernel sizes (odd). Default: [3, 5, 7, 9]
+        sigma_min (float): Min sigma. Default: 0.1
+        sigma_max (float): Max sigma. Default: 2.0
+        prob (float): Probability of applying. Default: 0.5
+    """
+
+    def __init__(self, kernel_sizes=None, sigma_min=0.1, sigma_max=2.0, prob=0.5):
+        self.kernel_sizes = kernel_sizes or [3, 5, 7, 9]
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.prob = prob
+
+    def __call__(self, results):
+        import numpy as np
+        import cv2
+        if np.random.random() < self.prob:
+            k = int(np.random.choice(self.kernel_sizes))
+            sigma = np.random.uniform(self.sigma_min, self.sigma_max)
+            results['img'] = cv2.GaussianBlur(results['img'], (k, k), sigma)
+        return results
+
+
+@PIPELINES.register_module()
+class RandomGaussianNoise:
+    """Add Gaussian noise to RGB image, leaving depth unchanged.
+
+    Simulates sensor noise to improve robustness. Forces the model to not
+    overfit to pixel-perfect RGB values.
+
+    Args:
+        std_min (float): Min noise std (in [0, 255] scale). Default: 3.0
+        std_max (float): Max noise std. Default: 15.0
+        prob (float): Probability of applying. Default: 0.5
+    """
+
+    def __init__(self, std_min=3.0, std_max=15.0, prob=0.5):
+        self.std_min = std_min
+        self.std_max = std_max
+        self.prob = prob
+
+    def __call__(self, results):
+        import numpy as np
+        if np.random.random() < self.prob:
+            std = np.random.uniform(self.std_min, self.std_max)
+            noise = np.random.randn(*results['img'].shape).astype(np.float32) * std
+            img = results['img'].astype(np.float32) + noise
+            results['img'] = np.clip(img, 0, 255).astype(np.uint8)
+        return results
+
+
+@PIPELINES.register_module()
+class RandomDepthScale:
+    """Randomly scale depth values to simulate different scene scales.
+
+    Multiplies GT depth by a random factor in [scale_min, scale_max].
+    This helps the model generalize beyond the limited depth range of uint8
+    training data (0-2.55m) by virtually stretching/compressing scene depth.
+
+    Args:
+        scale_min (float): Minimum scale factor. Default: 0.8
+        scale_max (float): Maximum scale factor. Default: 1.2
+        prob (float): Probability of applying the transform. Default: 0.5
+    """
+
+    def __init__(self, scale_min=0.8, scale_max=1.2, prob=0.5):
+        self.scale_min = scale_min
+        self.scale_max = scale_max
+        self.prob = prob
+
+    def __call__(self, results):
+        import numpy as np
+        if np.random.random() < self.prob:
+            scale = np.random.uniform(self.scale_min, self.scale_max)
+            depth = results['gt_semantic_seg'].copy()
+            depth = depth * scale
+            results['gt_semantic_seg'] = depth
+        return results
+

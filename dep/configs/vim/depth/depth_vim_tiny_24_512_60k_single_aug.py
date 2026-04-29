@@ -58,6 +58,8 @@ train_pipeline = [
     dict(type='RandomCrop', crop_size=(512, 512), cat_max_ratio=0.75),
     dict(type='RandomFlip', prob=0.5),
     dict(type='PhotoMetricDistortion'),
+    dict(type='RandomGaussianBlur', kernel_sizes=[3, 5, 7, 9], sigma_min=0.1, sigma_max=2.0, prob=0.5),
+    dict(type='RandomGaussianNoise', std_min=3.0, std_max=15.0, prob=0.5),
     dict(
         type='Normalize',
         mean=[123.675, 116.28, 103.53],
