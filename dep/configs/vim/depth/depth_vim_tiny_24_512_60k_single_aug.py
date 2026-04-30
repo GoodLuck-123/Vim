@@ -112,7 +112,7 @@ log_config = dict(
     interval=50, hooks=[dict(type='TextLoggerHook', by_epoch=False)])
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-load_from = 'work_dirs/depth_vim_tiny_24_512_60k_aug_v2/best_AbsRel_iter_30000.pth'
+load_from = 'work_dirs/depth_vim_tiny_24_512_60k_aug_edge/best_AbsRel_iter_30000.pth'
 resume_from = None
 workflow = [('train', 1)]
 cudnn_benchmark = True
@@ -136,6 +136,7 @@ evaluation = dict(
     rule='less',
     greater_keys=[],
     less_keys=['AbsRel'])
-fp16 = None
-work_dir = 'work_dirs/depth_vim_tiny_24_512_60k_aug_edge'
+fp16 = dict(type='bf16')
+compile = 'default'  # torch.compile, reduce-overhead not compatible with Mamba custom CUDA ops
+work_dir = 'work_dirs/depth_vim_tiny_24_512_60k_aug_bf16'
 gpu_ids = range(0, 1)

@@ -70,6 +70,30 @@ def train_segmentor(model,
                 if hasattr(m, "fp16_enabled"):
                     m.fp16_enabled = True
 
+    # bf16 mixed precision: wrap model forward with torch.cuda.amp.autocast
+    # bf16 has same exponent range as fp32, no loss scaling needed.
+    # torch.compile: JIT-compile decode_head for faster execution (PyTorch 2.x)
+    # Backbone skipped — Mamba custom CUDA ops (selective_scan, causal_conv1d)
+    # cause graph breaks and constant recompilation, negating benefit.
+    compile_cfg = cfg.get('compile', False)
+    if compile_cfg:
+        compile_mode = compile_cfg if isinstance(compile_cfg, str) else 'default'
+        logger.info(f'Enabling torch.compile on decode_head (mode={compile_mode})')
+        if hasattr(model, 'decode_head'):
+            model.decode_head = torch.compile(model.decode_head, mode=compile_mode)
+
+    fp16_cfg = cfg.get('fp16', None)
+    use_bf16 = fp16_cfg and fp16_cfg.get('type') == 'bf16'
+    if use_bf16:
+        logger.info('Enabling bf16 mixed precision (autocast)')
+        original_forward = model.forward
+
+        def bf16_forward(*args, **kwargs):
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                return original_forward(*args, **kwargs)
+
+        model.forward = bf16_forward
+
     # put model on gpus
     if distributed:
         find_unused_parameters = cfg.get('find_unused_parameters', False)
