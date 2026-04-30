@@ -13,13 +13,20 @@ class DepthHead(UPerHead):
     Args:
         min_depth (float): Minimum depth value in meters. Default: 1e-3
         max_depth (float): Maximum depth value in meters. Default: 10.0
+        loss_edge (dict, optional): Config for auxiliary edge loss.
+            Default: None (no edge supervision)
     """
 
-    def __init__(self, min_depth=1e-3, max_depth=10.0, **kwargs):
+    def __init__(self, min_depth=1e-3, max_depth=10.0, loss_edge=None, **kwargs):
         kwargs['num_classes'] = 1
         super().__init__(**kwargs)
         self.min_depth = min_depth
         self.max_depth = max_depth
+        if loss_edge is not None:
+            from mmseg.models.builder import build_loss
+            self.loss_edge = build_loss(loss_edge)
+        else:
+            self.loss_edge = None
 
     def forward(self, inputs):
         """Forward using full UPerHead multi-scale fusion, returns (B, H, W)."""
@@ -47,6 +54,11 @@ class DepthHead(UPerHead):
         # Call loss directly (bypass parent's resize logic)
         loss_decode = self.loss_decode(seg_logits, gt_semantic_seg)
         losses = dict(loss_depth=loss_decode)
+
+        if self.loss_edge is not None:
+            loss_edge = self.loss_edge(seg_logits, gt_semantic_seg)
+            losses['loss_edge'] = loss_edge
+
         return losses
 
     def forward_test(self, inputs, img_metas, test_cfg):

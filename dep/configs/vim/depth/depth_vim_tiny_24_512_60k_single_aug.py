@@ -41,7 +41,8 @@ model = dict(
         align_corners=False,
         min_depth=0.001,
         max_depth=10.0,
-        loss_decode=dict(type='SILogLoss', loss_weight=1.0)),
+        loss_decode=dict(type='SILogLoss', loss_weight=1.0),
+        loss_edge=dict(type='EdgeLoss', loss_weight=0.1)),
     train_cfg=dict(),
     test_cfg=dict(mode='whole'))
 find_unused_parameters = True
@@ -111,7 +112,7 @@ log_config = dict(
     interval=50, hooks=[dict(type='TextLoggerHook', by_epoch=False)])
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-load_from = 'work_dirs/depth_vim_tiny_24_512_60k_uint8/best_AbsRel_iter_25000.pth'
+load_from = 'work_dirs/depth_vim_tiny_24_512_60k_aug_v2/best_AbsRel_iter_30000.pth'
 resume_from = None
 workflow = [('train', 1)]
 cudnn_benchmark = True
@@ -136,5 +137,5 @@ evaluation = dict(
     greater_keys=[],
     less_keys=['AbsRel'])
 fp16 = None
-work_dir = 'work_dirs/depth_vim_tiny_24_512_60k_aug'
+work_dir = 'work_dirs/depth_vim_tiny_24_512_60k_aug_edge'
 gpu_ids = range(0, 1)
