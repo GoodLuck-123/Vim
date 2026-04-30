@@ -3,6 +3,9 @@
 **更新日期:** 2026-04-30
 **状态:** 训练优化完成 — 增强/EdgeLoss/bf16/SM_120/batch_size 全部实施，d1 ~88.4% plateau（受限于 uint8 数据 + Vim-Tiny 容量）
 
+**更新日期:** 2026-05-01
+**状态:** torch.compile 导致 GroupNorm 全部冻结 + 深度图网纹 → 确认禁用 compile（详见 三、8号问题）
+
 ---
 
 ## 一、版本演进与结果
@@ -15,6 +18,7 @@
 | v1.0.1.2 | `bb42390` | +EdgeLoss (Sobel gradient L1) | — | ~88.4% | 无显著提升 |
 | v1.0.2 | `0e05368` | bf16 + torch.compile | — | ~88.4% | 1.4×加速, 精度无损 |
 | v1.0.3 | `a331c52` | SM_120 native compile + bs/lr联动 | — | 训练中 | 0.31s/iter @ bs=32 |
+| v1.0.4 | `—` | **禁用 torch.compile** (GN freeze bug), 保留 bf16+SM_120+增强 | — | 0.89 @ iter_42000 | compile 使所有 GN 层 γ=1.0/β=0.0 冻结, 深度图现 16px 网纹; 禁用后恢复正常 |
 
 ---
 
@@ -77,6 +81,7 @@
 | 2 | 从零训练不收敛 | 24层Mamba + 仅50K图片, 无预训练权重 | 加载Vim官方ImageNet预训练权重 | config中 backbone.pretrained='...' |
 | 3 | BerHuLoss学训练分布均值 | BerHu是scale-dependent loss, 模型学预测0.8m (训练中位) | 换SILogLoss (scale-invariant in log space) | configs/.../single.py |
 | 4 | Eval指标无意义 | 测试分布与训练分布不同, 无scale对齐 | Per-image LS log-space alignment before metrics | datasets/nyu_depth_v2.py |
+| 5 | **torch.compile 导致 GroupNorm 全部冻结 + 深度图网纹** | compile 将 GN backward 的空间归约 (Σ over H×W) 融合进 CUDA kernel, bf16 下 16384 次累加导致小梯度 underflow → γ/β 梯度归约结果趋近 0。AdamW exp_avg 始终 ≈ 0, 权重永远停在 γ=1.0, β=0.0。同时 ReLU mask 可能错误传播到 GN 梯度路径。效果: 3×3 conv 补偿 GN 缺失 → 高噪 UPerHead 输出 → bilinear 上采样产生 16px 周期网纹。GPU kernel 内静默失败, 精度照涨 (LS alignment 兜底), 无 NaN 无报错 | **禁用 compile** (`compile = 'default'` 注释掉), GN 恢复正常训练, 网纹消失 | configs/.../single_aug.py, decode_heads/depth_head.py |
 
 ### 脚本/工具问题
 
@@ -93,13 +98,13 @@
 ```python
 # depth_vim_tiny_24_512_60k_single_aug.py
 backbone: VisionMambaSeg (Vim-Tiny, 24层, pretrained=ImageNet)
-decode_head: DepthHead (GroupNorm, SILogLoss + EdgeLoss aux)
+decode_head: DepthHead (GroupNorm, SILogLoss only, EdgeLoss 已删除)
 optimizer: AdamW lr=2e-4, weight_decay=0.02, grad_clip=max_norm=5.0
-schedule: poly, warmup=500, 10000 iters
+schedule: poly, warmup=500, max_iters=60000
 batch: 32, workers: 16, input: 512×512
-fp16: bf16 autocast, compile: default (decode_head only)
+fp16: bf16 autocast, compile: 已禁用 (torch.compile 导致 GN 冻结+网纹, 见三/训练问题#5)
 augmentation: RandomDepthScale + GaussianBlur + GaussianNoise + PhotoMetricDistortion
-eval: per-image LS log-space alignment (AbsRel, RMSE, δ1/2/3)
+eval: per-image LS log-space alignment (AbsRel, RMSE, δ1/2/3) ⚠️ 早期会严重虚高, Spearman 才是真实质量
 ```
 
 ---
