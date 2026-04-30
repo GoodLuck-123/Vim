@@ -1,21 +1,20 @@
 # Vision Mamba Depth Estimation — 项目状态与改进计划
 
-**更新日期:** 2026-04-29
-**状态:** 训练完成，可视化脚本已修复，效果与之前最好情况一致
+**更新日期:** 2026-04-30
+**状态:** 训练优化完成 — 增强/EdgeLoss/bf16/SM_120/batch_size 全部实施，d1 ~88.4% plateau（受限于 uint8 数据 + Vim-Tiny 容量）
 
 ---
 
-## 一、当前结果
+## 一、版本演进与结果
 
-| 实验 | AbsRel | RMSE | delta_1 | delta_2 | delta_3 | 说明 |
-|------|--------|------|---------|---------|---------|------|
-| 预训练+SILog (60K iters, 当前) | 0.266 | 0.825 | 60.0% | 84.5% | 94.0% | uint8数据正确加载(÷100)，稳定复现 |
-| 预训练+SILog (60K iters, 旧) | 0.106 | 0.399 | 88.9% | 97.9% | 99.5% | 同配置同数据，原因待分析 |
-
-两个实验使用完全相同的配置文件 `depth_vim_tiny_24_512_60k_single.py`，相同训练/测试数据。
-88.9%实验的eval从d1=0.35%逐步提升至88.9%，与60%实验的全程平稳(~60%)模式不同。
-
-可视化显示：物体轮廓清晰，相对深度关系正确，但绝对深度偏小（受限于uint8训练数据0-2.55m范围）。
+| 版本 | Git | 主要改动 | AbsRel | d1 | 备注 |
+|------|-----|----------|--------|-----|------|
+| v1.0.0 | `3d30bfd` | Stable baseline, SILog, 无增强 | 0.266 | 60.0% | uint8数据正确加载 |
+| v1.0.1 | `af55bcb` | 空间增强 (scale/crop/flip/color) | — | +0.4pp | 微弱提升 |
+| v1.0.1.1 | `551228a` | +RandomDepthScale/GaussianBlur/Noise | — | ~88.4% | 增强收益有限 |
+| v1.0.1.2 | `bb42390` | +EdgeLoss (Sobel gradient L1) | — | ~88.4% | 无显著提升 |
+| v1.0.2 | `0e05368` | bf16 + torch.compile | — | ~88.4% | 1.4×加速, 精度无损 |
+| v1.0.3 | `a331c52` | SM_120 native compile + bs/lr联动 | — | 训练中 | 0.31s/iter @ bs=32 |
 
 ---
 
@@ -50,7 +49,7 @@
 
 | # | 问题 | 根因 | 修复 | 文件 |
 |---|------|------|------|------|
-| 1 | RTX 5080 sm_120 CUDA扩展编译失败 | Blackwell架构不在PyTorch原生arch列表 | `CUDA_ARCH="sm_120"`, setup.py加`compute_120` | causal-conv1d/setup.py, mamba-1p1p1/setup.py |
+| 1 | RTX 5080 sm_120 CUDA扩展编译失败 | Blackwell架构不在mamba/causal-conv1d setup.py arch列表 | setup.py加`arch=compute_120,code=sm_120`, 重编译含native sm_120 SASS | causal-conv1d/setup.py, mamba-1p1p1/setup.py |
 | 2 | `torch.load` 报 UnpicklingError | PyTorch 2.6+ `weights_only` 默认改为 True | 所有 `torch.load()` 加 `weights_only=False` | backbone/vim.py, visualize_depth.py |
 | 3 | MMCV._ext 导入失败 | mmcv-full 缺少 _ext 模块 (无CUDA编译) | 创建 stub 模块 (`mmcv/_ext.py`) 模拟缺失接口 | site-packages/mmcv/_ext.py |
 | 4 | Python版本不兼容 | vim需要3.10, dep需要3.9 | conda env用Python 3.9.19 | conda环境 |
@@ -92,12 +91,14 @@
 ## 四、当前训练配置
 
 ```python
-# depth_vim_tiny_24_512_60k_single.py
+# depth_vim_tiny_24_512_60k_single_aug.py
 backbone: VisionMambaSeg (Vim-Tiny, 24层, pretrained=ImageNet)
-decode_head: DepthHead (GroupNorm, SILogLoss)
-optimizer: AdamW lr=2e-4, weight_decay=0.02
-schedule: poly, warmup=500, 60K iters
-batch: 8, input: 512×512
+decode_head: DepthHead (GroupNorm, SILogLoss + EdgeLoss aux)
+optimizer: AdamW lr=2e-4, weight_decay=0.02, grad_clip=max_norm=5.0
+schedule: poly, warmup=500, 10000 iters
+batch: 32, workers: 16, input: 512×512
+fp16: bf16 autocast, compile: default (decode_head only)
+augmentation: RandomDepthScale + GaussianBlur + GaussianNoise + PhotoMetricDistortion
 eval: per-image LS log-space alignment (AbsRel, RMSE, δ1/2/3)
 ```
 
@@ -105,51 +106,40 @@ eval: per-image LS log-space alignment (AbsRel, RMSE, δ1/2/3)
 
 ## 五、改进计划
 
-### Phase 1: 数据质量 (最高优先级)
+### Phase 1: 数据质量 ✅ (已完成)
 
-1. **获取uint16训练数据**
-   - 下载NYUv2官方raw kinect depth (uint16, 0-10m)
-   - 或用NYUv2 labeled training set (795训练/654测试的标准split)
-   - 避免8-bit有损压缩
+1. **获取uint16训练数据** ⬜ (未做)
+2. **深度数据增强** ✅
+   - `RandomDepthScale` ×[0.8, 1.2] (v1.0.1.1)
+   - Random horizontal flip (已有)
+   - `RandomGaussianBlur` + `RandomGaussianNoise` (v1.0.1.1)
+   - `PhotoMetricDistortion` (已有)
 
-2. **深度数据增强**
-   - Per-sample random scale augmentation (×[0.8, 1.2]) — 模拟不同距离场景
-   - Random horizontal flip (已有, 确认启用)
-   - Color jitter on RGB (增加光照不变性)
+### Phase 2: 训练策略 ✅ (核心项已完成)
 
-### Phase 2: 训练策略
-
-3. **分层学习率**
-   - 恢复`LayerDecayOptimizerConstructor` (base config有)
-   - Backbone浅层lr低(0.1×), 深层+head lr高(1×)
-
-4. **Scale-Shift Invariant (SSI) loss**
-   - 当前SILog是近似scale-invariant (λ=0.85)
-   - 真正的SSI loss: `min_{s,t} ||s*pred+t-gt||` per image
-   - 训练时每batch计算per-image optimal s,t → 更robust
-
-5. **混合精度训练**
-   - fp16/bf16加速训练, 允许更大batch size
-   - RTX 5080支持bf16
+3. **分层学习率** ⬜ (未做)
+4. **SSI loss** ⬜ (未做, SILog足够)
+5. **混合精度训练** ✅
+   - bf16 via `torch.amp.autocast` (v1.0.2)
+   - 1.4×加速, VRAM -31%, 精度无损
+6. **EdgeLoss** ✅ (v1.0.1.2)
+   - Sobel gradient L1, loss_weight=0.1
+   - 无显著提升, 保留为辅助loss
+7. **SM_120 native compile** ✅ (v1.0.3)
+   - mamba-1p1p1 + causal-conv1d 重编译含 sm_120 SASS
+   - 消除 Blackwell PTX JIT 开销
+8. **torch.compile** ✅ (v1.0.2)
+   - decode_head only (backbone Mamba ops 不兼容)
 
 ### Phase 3: 模型增强
 
-6. **多尺度测试**
-   - 当前仅512×512 single scale
-   - 加flip + multi-scale testing提升精度
-
-7. **Vim-Small升级**
-   - embed_dim: 192→384 (参数7M→26M)
-   - 需要更多VRAM但精度提升显著
+9. **多尺度测试** ⬜
+10. **Vim-Small升级** ⬜
 
 ### Phase 4: 评估与对比
 
-8. **标准benchmark对比**
-   - 与已发表NYUv2方法对比: DPT, AdaBins, BTS, DepthFormer等
-   - 使用标准eval protocol (per-image median scaling或无scaling)
-
-9. **跨数据集泛化**
-   - 在SUN RGB-D, KITTI等测试zero-shot性能
+11. **标准benchmark对比** ⬜
+12. **跨数据集泛化** ⬜
 
 ---
 

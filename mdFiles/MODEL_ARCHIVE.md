@@ -1,6 +1,6 @@
 # 模型结构与数据管道归档
 
-**更新日期:** 2026-04-29
+**更新日期:** 2026-04-30
 
 本文档记录每次稳定训练结果的完整模型结构与数据管道，用于对比实验与结果复现。
 
@@ -302,7 +302,98 @@ dep/
 
 ---
 
-## 五、已知限制
+## 五、版本演进
+
+### v1.0.0 — Stable Baseline (3d30bfd)
+
+**配置:** `depth_vim_tiny_24_512_60k_single.py`
+**训练:** AdamW lr=2e-4, bs=8, 60K iters, 无混合精度, 无增强
+
+| AbsRel | RMSE | d1 | d2 | d3 |
+|--------|------|----|----|-----|
+| 0.266 | 0.825 | 60.0% | 84.5% | 94.0% |
+
+基础pipeline: Resize→RandomCrop→RandomFlip→PhotoMetricDistortion→Normalize→Pad
+
+---
+
+### v1.0.1 — Spatial Augmentation (af55bcb)
+
+**新增:** depth值空间缩放 + 空间裁剪 + 空间翻转 + RGB颜色增强
+**结果:** d1 提升约 0.4 个百分点
+**结论:** 空间增强有微弱正向作用，但 uint8 数据上限仍是瓶颈
+
+---
+
+### v1.0.1.1 — RGB Augmentation (551228a)
+
+**新增 pipeline transforms (`depth_loading.py`):**
+
+| Transform | 参数 | 作用 |
+|-----------|------|------|
+| `RandomDepthScale` | ×[0.8, 1.2], prob=0.5 | 模拟不同距离场景 |
+| `RandomGaussianBlur` | kernel∈[3,5,7,9], σ∈[0.1,2.0], prob=0.5 | 降低纹理依赖 |
+| `RandomGaussianNoise` | σ∈[3,15], prob=0.5 | 模拟传感器噪声 |
+
+**结果:** d1 ~88.2-88.4%，与v1.0.1接近，增强带来的收益有限
+
+---
+
+### v1.0.1.2 — EdgeLoss (bb42390)
+
+**新增 `losses/silog_loss.py` → EdgeLoss:**
+- 3×3 Sobel 梯度提取 pred/GT 边缘
+- L1 loss on gradient magnitude difference
+- loss_weight=0.1 (辅助loss)
+
+**结果:** 与v1.0.1.1基本一致，边缘loss无显著提升
+**结论:** SILogLoss 本身对边缘已有较好约束，EdgeLoss 与主 loss 目标部分重叠
+
+---
+
+### v1.0.2 — BF16 + torch.compile (0e05368)
+
+**新增 `mmcv_custom/train_api.py`:**
+
+| 优化 | 实现 | 效果 |
+|------|------|------|
+| bf16 mixed precision | `torch.amp.autocast('cuda', dtype=torch.bfloat16)` wrap model.forward | **1.4× 加速**, VRAM -31%, 精度无损 |
+| torch.compile | `torch.compile(decode_head, mode='default')` | decode_head仅占小部分计算, 无明显加速 |
+| torch.compile (backbone) | 尝试失败 | Mamba CUDA ops (selective_scan, causal_conv1d) 造成 Dynamo graph break, 反复重编译, loss spike (0.12→0.51) |
+
+**bf16 不适用之处:** 无。bf16 与 fp32 指数位相同，不需要 loss scaling。
+
+**结果:** 训练速度从 ~0.5s/iter 降到 ~0.36s/iter (bs=8, workers=8)
+
+---
+
+### v1.0.3 — SM_120 Native Compile (a331c52)
+
+**问题:** RTX 5080 (Blackwell, compute capability 12.0) 运行 Mamba CUDA kernel 时，nvcc 编译的 .so 最高只到 sm_90 (Hopper)，driver 在首次 launch 时做 PTX→SASS JIT 编译，每次 kernel 变体有额外开销。
+
+**修改:**
+- `mamba-1p1p1/setup.py` — 添加 `arch=compute_120,code=sm_120` (CUDA ≥ 12.0)
+- `causal-conv1d/setup.py` — 同上
+- 重编译后 `selective_scan_cuda.so` 和 `causal_conv1d_cuda.so` 包含 native sm_120 SASS
+
+**验证:** `cuobjdump --list-text` 确认 sm_120 已编译进 .so
+
+**速度影响:** 消除 PTX JIT 开销，per-iteration 约 5-15% 提升（与 worker 提升叠加后从 ~0.36s → ~0.31s/iter）
+
+**Batch size 联动调整 (`depth_vim_tiny_24_512_60k_single_aug.py`):**
+
+| 参数 | v1.0.2 | v1.0.3 | 说明 |
+|------|--------|--------|------|
+| `samples_per_gpu` | 8 | 32 | 4× (48 OOM) |
+| `workers_per_gpu` | 8 | 16 | 9800X3D 16线程 |
+| `lr` | 2e-4 | 2e-4 | AdamW保守, 不严格线性缩放 |
+| `max_iters` | 30000 | 10000 | 总样本 320k (原 240k) |
+
+warmup_iters / weight_decay / grad_clip 保持不变 — GroupNorm不受batch size影响。
+
+---
+
+## 六、已知限制
 
 1. **uint8训练数据上限:** 训练GT硬上限2.55m (255cm/100), 模型无法学>2.55m的绝对深度
 2. **训练/测试分布不匹配:** train中位0.78m vs test中位2.10m, 虽然LS alignment在eval时校正scale, 但限制了预测的绝对精度
