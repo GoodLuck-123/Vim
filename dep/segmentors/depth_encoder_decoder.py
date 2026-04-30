@@ -38,7 +38,7 @@ class DepthEncoderDecoder(EncoderDecoder):
                                           mode='bilinear', align_corners=False)
                 seg_logit = seg_logit.squeeze(0).squeeze(0)  # back to (H, W)
 
-        seg_logit = seg_logit.cpu().numpy()
+        seg_logit = seg_logit.detach().cpu().numpy()
         return [seg_logit]
 
     def aug_test(self, imgs, img_metas, rescale=True):
